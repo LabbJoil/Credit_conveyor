@@ -20,16 +20,16 @@ import java.util.List;
 @Component
 @RestController
 @RequestMapping("/conveyor")
-public class MultipleController {
-    private final Facade facade;
+public class CreditConveyorController {
+    private final CreditConveyorService service;
 
     @PostMapping("/offers")
     public ResponseEntity<List<LoanOfferDTO>> offerController(@RequestBody LoanApplicationRequestDTO request) {
-        return ResponseEntity.ok(facade.generateOffers(request));
+        return ResponseEntity.ok(service.generateOffers(request));
     }
 
     @PostMapping("/calculation")
     public ResponseEntity<CreditDTO> calculationController(@RequestBody ScoringDataDTO request) {
-        return ResponseEntity.ok(facade.generateCredit(request));
+        return ResponseEntity.ok(service.generateCredit(request));
     }
 }
