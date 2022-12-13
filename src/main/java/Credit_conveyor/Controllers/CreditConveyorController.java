@@ -1,6 +1,6 @@
 package Credit_conveyor.Controllers;
 
-import Credit_conveyor.Services.Facade;
+import Credit_conveyor.Services.CreditConveyorService;
 import Credit_conveyor.model.LoanApplicationRequestDTO;
 import Credit_conveyor.model.LoanOfferDTO;
 import Credit_conveyor.model.ScoringDataDTO;
