@@ -83,7 +83,7 @@ public class CreditConveyorService {
                 requestAmount, personalTerm, personalRate);
 
         double personTotalAmount = personPaymentSchedule.stream().mapToDouble(x -> x.getTotalPayment().doubleValue()).sum();
-        BigDecimal personalPsk = BigDecimal.valueOf((personTotalAmount / requestAmount - 1) / (personalTerm / 12) * 100)
+        BigDecimal personalPsk = BigDecimal.valueOf((personTotalAmount / requestAmount - 1) / (personalTerm / 12.0) * 100)
                 .setScale(3, ROUND_HALF_UP);
 
         return new CreditDTO().builder()
@@ -182,7 +182,7 @@ public class CreditConveyorService {
         }
         Integer firstDigitAmount = (int) (intAmount / Math.pow(10, (int) Math.log10(intAmount)));
         insurance += amount / (countDigitalAmount + firstDigitAmount);
-        return Math.ceil(insurance *100)/100;
+        return Math.ceil(insurance * 100) / 100;
     }
 
     private BigDecimal calculateMonthlyPayment(double amount, Integer term, double rate) {
