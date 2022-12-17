@@ -7,7 +7,7 @@ import Credit_conveyor.model.enums.Gender;
 import Credit_conveyor.model.enums.MaritalStatus;
 import Credit_conveyor.model.enums.Position;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -16,128 +16,130 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-@RequiredArgsConstructor
-@Component
-public class CreditConveyorService {
+import static java.math.BigDecimal.ROUND_HALF_UP;
 
-    private double mainRate = 22;
-    private final Integer insurance = 450;
-    private double totalPayments;
-    private static LoanApplicationRequestDTO loanApplicationRequest;
-    private ScoringDataDTO scoringData;
-    private static long chiefId;
-    private static final String namePattern = "^[a-zA-Z]*$";
-    private static final String emailPattern = "[\\w\\.]{2,50}@[\\w\\.]{2,20}";
-    private static final String digitPattern = "^[0-9]*$";
+@RequiredArgsConstructor
+@Service
+public class CreditConveyorService {
+    private final double mainRate = 22;
 
     public List generateOffers(LoanApplicationRequestDTO requestLoanApplication) {
-        loanApplicationRequest = requestLoanApplication;
 
-        Prescoring(false);
-        createChiefAppId();
+        prescoring(requestLoanApplication);
 
-        List<LoanOfferDTO> list_loan_offers = new ArrayList<>();
+        long chiefId = createChiefAppId(requestLoanApplication);
+        double personalAmount = requestLoanApplication.getAmount().doubleValue();
+        Integer personalTerm = requestLoanApplication.getTerm();
+        List<LoanOfferDTO> listLoanOffers = new ArrayList<>();
+        boolean isInsurance = true, isSalary = false;
 
-        boolean insurance_bool = true, salary_bool = false;
         for (int i = 0; i < 4; i++) {
-            if (i % 2 == 0) insurance_bool = !insurance_bool;
-            else salary_bool = !salary_bool;
+            if (i % 2 == 0) isInsurance = !isInsurance;
+            else isSalary = !isSalary;
 
-            double personalRate = mainRate, amountFromBank = loanApplicationRequest.getAmount().doubleValue();
-            if (salary_bool) personalRate--;
-            if (insurance_bool) {
+            double personalRate = mainRate, amountFromBank = personalAmount;
+            if (isSalary) personalRate--;
+            if (isInsurance) {
                 personalRate -= 2;
-                amountFromBank += сalculateAmountWithInsuranceSalary(loanApplicationRequest.getAmount());
+                amountFromBank += сalculateInsurance(personalAmount);
             }
 
-            BigDecimal personalMonthlyPayment = calculateMonthlyPayment(amountFromBank, loanApplicationRequest.getTerm(), mainRate);
+            BigDecimal personalMonthlyPayment = calculateMonthlyPayment(amountFromBank, personalTerm, personalRate);
+            long personalAppId = chiefId + (long) (personalMonthlyPayment.doubleValue() * personalRate);
+            BigDecimal personalTotalAmount = personalMonthlyPayment.multiply(BigDecimal.valueOf(personalTerm));
 
-            list_loan_offers.add(new LoanOfferDTO().builder()
-                    .requestedAmount(loanApplicationRequest.getAmount())
-                    .term(loanApplicationRequest.getTerm())
+            listLoanOffers.add(new LoanOfferDTO().builder()
+                    .requestedAmount(BigDecimal.valueOf(personalAmount))
+                    .term(personalTerm)
                     .monthlyPayment(personalMonthlyPayment)
-                    .totalAmount(personalMonthlyPayment.multiply(new BigDecimal(loanApplicationRequest.getTerm())))
-                    .rate(new BigDecimal(personalRate))
-                    .isInsuranceEnabled(insurance_bool)
-                    .isSalaryClient(salary_bool)
-                    .applicationId(createPersonalAppId(personalMonthlyPayment.doubleValue(), personalRate))
+                    .totalAmount(personalTotalAmount)
+                    .rate(BigDecimal.valueOf(personalRate))
+                    .isInsuranceEnabled(isInsurance)
+                    .isSalaryClient(isSalary)
+                    .applicationId(personalAppId)
                     .build());
         }
-        Collections.sort(list_loan_offers, (o2, o1) -> o1.getRate().subtract(o2.getRate()).intValue());
+        Collections.sort(listLoanOffers, (o2, o1) -> o1.getRate().subtract(o2.getRate()).intValue());
 
-        return list_loan_offers;
+        return listLoanOffers;
     }
 
     public CreditDTO generateCredit(ScoringDataDTO requestScoringData) {
-        scoringData = requestScoringData;
 
-        Prescoring(true);
-        double personalRate = Scoring(), amountFromBank = scoringData.getAmount().doubleValue();
+        double personalRate = scoring(requestScoringData),
+                requestAmount = requestScoringData.getAmount().doubleValue();
+        boolean personIsInsurance = requestScoringData.getIsInsuranceEnabled(),
+                personIsSalary = requestScoringData.getIsSalaryClient();
+        Integer personalTerm = requestScoringData.getTerm();
 
-        if (scoringData.getIsSalaryClient()) personalRate--;
-        if (scoringData.getIsInsuranceEnabled()) {
+        if (personIsSalary) personalRate--;
+        if (personIsInsurance) {
             personalRate -= 2;
-            amountFromBank += сalculateAmountWithInsuranceSalary(scoringData.getAmount());
+            requestAmount += сalculateInsurance(requestScoringData.getAmount().doubleValue());
         }
 
-        BigDecimal personalMonthlyPayment = calculateMonthlyPayment(amountFromBank, scoringData.getTerm(), personalRate);
-        List<PaymentScheduleElementDTO> listPaymentSchedule = createListPaymentSchedule(personalMonthlyPayment.doubleValue(),
-                amountFromBank, scoringData.getTerm(), personalRate);
+        BigDecimal personalMonthlyPayment = calculateMonthlyPayment(requestAmount, personalTerm, personalRate);
+        List<PaymentScheduleElementDTO> personPaymentSchedule = createListPaymentSchedule(personalMonthlyPayment.doubleValue(),
+                requestAmount, personalTerm, personalRate);
 
-        BigDecimal personalPsk = new BigDecimal((totalPayments / amountFromBank - 1) / (scoringData.getTerm() / 12) * 100)
-                .setScale(3, BigDecimal.ROUND_HALF_UP);
+        double personTotalAmount = personPaymentSchedule.stream().mapToDouble(x -> x.getTotalPayment().doubleValue()).sum();
+        BigDecimal personalPsk = BigDecimal.valueOf((personTotalAmount / requestAmount - 1) / (personalTerm / 12) * 100)
+                .setScale(3, ROUND_HALF_UP);
 
         return new CreditDTO().builder()
-                .amount(new BigDecimal(totalPayments).setScale(3, BigDecimal.ROUND_HALF_UP))
-                .term(scoringData.getTerm())
-                .rate(new BigDecimal(personalRate))
+                .amount(BigDecimal.valueOf(personTotalAmount).setScale(3, ROUND_HALF_UP))
+                .term(personalTerm)
+                .rate(BigDecimal.valueOf(personalRate))
                 .psk(personalPsk)
                 .monthlyPayment(personalMonthlyPayment)
-                .isInsuranceEnabled(scoringData.getIsInsuranceEnabled())
-                .isSalaryClient(scoringData.getIsSalaryClient())
-                .paymentSchedule(listPaymentSchedule).build();
+                .isInsuranceEnabled(personIsInsurance)
+                .isSalaryClient(personIsSalary)
+                .paymentSchedule(personPaymentSchedule).build();
     }
 
+    private void prescoring(LoanApplicationRequestDTO loanApplicationRequest) {
 
-    private void Prescoring(boolean isScoringData) {
-
-        if (!isScoringData) {
-            if (loanApplicationRequest.getAmount().compareTo(new BigDecimal(10000)) == -1 ||
-                    loanApplicationRequest.getTerm() < 6 ||
-                    loanApplicationRequest.getFirstName().length() > 29 || !loanApplicationRequest.getFirstName().matches(namePattern) ||
-                    loanApplicationRequest.getMiddleName().length() > 29 || !loanApplicationRequest.getMiddleName().matches(namePattern) ||
-                    loanApplicationRequest.getLastName().length() > 29 || !loanApplicationRequest.getLastName().matches(namePattern) ||
-                    loanApplicationRequest.getPassportNumber().length() != 6 || !loanApplicationRequest.getPassportNumber().matches(digitPattern) ||
-                    loanApplicationRequest.getPassportSeries().length() != 4 || !loanApplicationRequest.getPassportSeries().matches(digitPattern) ||
-                    !loanApplicationRequest.getEmail().matches(emailPattern) ||
-                    checkDate(loanApplicationRequest.getBirthdate()) < 18)
-                throw new IncorrectFieldOrRefusedException("Incorrect data entered", 1001);
-        }
-        else if (scoringData.getAmount().compareTo(new BigDecimal(10000)) == -1 ||
-                scoringData.getTerm() < 6 ||
-                scoringData.getFirstName().length() > 29 || !scoringData.getFirstName().matches(namePattern) ||
-                scoringData.getMiddleName().length() > 29 || !scoringData.getMiddleName().matches(namePattern) ||
-                scoringData.getLastName().length() > 29 || !scoringData.getLastName().matches(namePattern) ||
-                scoringData.getPassportNumber().length() != 6 || !scoringData.getPassportNumber().matches(digitPattern) ||
-                scoringData.getPassportSeries().length() != 4 || !scoringData.getPassportSeries().matches(digitPattern) ||
-                checkDate(scoringData.getBirthdate()) < 18)
-            throw new IncorrectFieldOrRefusedException("Incorrect data entered", 1002);
+        BigDecimal minAmount = BigDecimal.valueOf(10000);
+        if (loanApplicationRequest.getAmount().compareTo(minAmount) == -1)
+            throw new IncorrectFieldOrRefusedException("Сумма кредита должна быть больше 10000", 1301);
+        if (loanApplicationRequest.getTerm() < 6)
+            throw new IncorrectFieldOrRefusedException("Сумма кредита должна быть больше 10000", 1302);
+        if (!loanApplicationRequest.getFirstName().matches("[a-zA-Z]{2,30}"))
+            throw new IncorrectFieldOrRefusedException("Некорректно заполнено имя", 1303);
+        if (!loanApplicationRequest.getMiddleName().matches("[a-zA-Z]{2,30}"))
+            throw new IncorrectFieldOrRefusedException("Некорректно заполнено отчество", 1304);
+        if (!loanApplicationRequest.getLastName().matches("[a-zA-Z]{2,30}"))
+            throw new IncorrectFieldOrRefusedException("Некорректно заполнено фамилия", 1305);
+        if (!loanApplicationRequest.getPassportNumber().matches("[0-9]{6}"))
+            throw new IncorrectFieldOrRefusedException("Некорректно заполнен номер паспорта", 1306);
+        if (!loanApplicationRequest.getPassportSeries().matches("[0-9]{4}"))
+            throw new IncorrectFieldOrRefusedException("Некорректно заполнена серия паспорта", 1307);
+        if (!loanApplicationRequest.getEmail().matches("[\\w\\.]{2,50}@[\\w\\.]{2,20}"))
+            throw new IncorrectFieldOrRefusedException("Некорректно заполнен Email", 1308);
+        if (calculatePersonAge(loanApplicationRequest.getBirthdate()) < 18)
+            throw new IncorrectFieldOrRefusedException("Клиенту должно быть больше 18 лет", 1309);
     }
 
-    private double Scoring() {
+    private double scoring(ScoringDataDTO scoringData) {
         double newPersonalRate = mainRate;
+
         EmploymentDTO newEmployment = scoringData.getEmployment();
-        int personAge = checkDate(scoringData.getBirthdate());
+        int personAge = calculatePersonAge(scoringData.getBirthdate());
         EmploymentStatus employmentStatusEnum = newEmployment.getEmploymentStatus();
         MaritalStatus maritalStatusEnum = scoringData.getMaritalStatus();
         Gender genderEnum = scoringData.getGender();
         Position positionEnum = newEmployment.getPosition();
 
-        if (newEmployment.getEmploymentStatus() == EmploymentStatus.UNEMPLOYED ||
-                personAge > 60 || personAge < 20 ||
-                newEmployment.getWorkExperienceTotal() < 12 || newEmployment.getWorkExperienceCurrent() < 3 ||
-                scoringData.getAmount().compareTo(newEmployment.getSalary().multiply(new BigDecimal(20))) == 1)
-            throw new IncorrectFieldOrRefusedException("Отказано", 1300);
+        if (newEmployment.getEmploymentStatus() == EmploymentStatus.UNEMPLOYED)
+            throw new IncorrectFieldOrRefusedException("Отказано. Безработный", 1301);
+        if (personAge > 60) throw new IncorrectFieldOrRefusedException("Отказано. Старше 60", 1302);
+        if (personAge < 20) throw new IncorrectFieldOrRefusedException("Отказано. Младше 20", 1303);
+        if (newEmployment.getWorkExperienceTotal() < 12)
+            throw new IncorrectFieldOrRefusedException("Отказано. Общий стаж менее 12 месяцев", 1304);
+        if (newEmployment.getWorkExperienceCurrent() < 3)
+            throw new IncorrectFieldOrRefusedException("Отказано. Текущий стаж менее 3 месяцев", 1305);
+        if (scoringData.getAmount().compareTo(newEmployment.getSalary().multiply(BigDecimal.valueOf(20))) == 1)
+            throw new IncorrectFieldOrRefusedException("Отказано. Сумма кредита боьше 20 зарплат клиента", 1306);
 
         if (employmentStatusEnum == EmploymentStatus.SELFEMPLOYED) newPersonalRate++;
         else if (employmentStatusEnum == EmploymentStatus.BUSINESSOWNER) newPersonalRate += 3;
@@ -149,11 +151,11 @@ public class CreditConveyorService {
         else if (genderEnum == Gender.MALE && personAge > 30 && personAge < 55) newPersonalRate -= 3;
         else if (genderEnum == Gender.NONBINARY) newPersonalRate += 3;
         if (scoringData.getDependentAmount() > 1) newPersonalRate++;
+
         return newPersonalRate;
     }
 
-
-    private static Integer checkDate(LocalDate birthday) {
+    private Integer calculatePersonAge(LocalDate birthday) {
         LocalDate nowDate = LocalDate.now();
         birthday = LocalDate.of(birthday.getYear(), birthday.getMonthValue(), birthday.getDayOfMonth());
         nowDate = LocalDate.of(nowDate.getYear(), nowDate.getMonthValue(), nowDate.getDayOfMonth());
@@ -162,75 +164,68 @@ public class CreditConveyorService {
         return differenceDates.getYear();
     }
 
+    private long createPersonalAppId(double monthlyPayment, double personalRate, long appId) {
+        long personalId = appId + (long) (monthlyPayment * personalRate);
+        return personalId;
+    }
 
-    private double сalculateAmountWithInsuranceSalary(BigDecimal amount) {
+    private long createChiefAppId(LoanApplicationRequestDTO loanApplicationRequest) {
+        String all_str_fields_request = loanApplicationRequest.getFirstName() + loanApplicationRequest.getMiddleName() + loanApplicationRequest.getLastName() + loanApplicationRequest.getEmail() + loanApplicationRequest.getPassportNumber() + loanApplicationRequest.getPassportSeries() + loanApplicationRequest.getBirthdate();
+        long appId = (all_str_fields_request).chars().sum();
+        appId += loanApplicationRequest.getTerm();
+        appId += loanApplicationRequest.getAmount().intValue();
+        return appId;
+    }
 
-        int intAmount = amount.intValue(), amountForCount = amount.intValue(), countDigitalAmount = 0, minAmountLength = 5;
+    private double сalculateInsurance(double amount) {
+
+        double insurance = amount / 4;
+        int intAmount = (int) amount, amountForCount = (int) amount, countDigitalAmount = 0;
         while (amountForCount != 0) {
             amountForCount /= 10;
             countDigitalAmount++;
         }
-        Integer firstDigitAmount = (int) (intAmount / Math.pow(10, (int) Math.log10(intAmount) - 1 - (countDigitalAmount - minAmountLength)));
-        double newAmount = insurance * firstDigitAmount;
-
-        return newAmount;
+        Integer firstDigitAmount = (int) (intAmount / Math.pow(10, (int) Math.log10(intAmount)));
+        insurance += amount / (countDigitalAmount + firstDigitAmount);
+        return Math.ceil(insurance *100)/100;
     }
-
-    private long createPersonalAppId(double monthlyPayment, double personalRate) {
-        long personalId = chiefId + (long) (monthlyPayment * personalRate);
-        return personalId;
-    }
-
-    private static void createChiefAppId() {
-        String all_str_fields_request = loanApplicationRequest.getFirstName() + loanApplicationRequest.getMiddleName() + loanApplicationRequest.getLastName() + loanApplicationRequest.getEmail() + loanApplicationRequest.getPassportNumber() + loanApplicationRequest.getPassportSeries() + loanApplicationRequest.getBirthdate();
-        chiefId = (all_str_fields_request).chars().sum();
-        chiefId += loanApplicationRequest.getTerm();
-        chiefId += loanApplicationRequest.getAmount().intValue();
-    }
-
 
     private BigDecimal calculateMonthlyPayment(double amount, Integer term, double rate) {
         double rateMonth = rate / 12 / 100;
         double ratioAnnuity = (rateMonth * Math.pow((1 + rateMonth), term)) / (Math.pow((1 + rateMonth), term) - 1);
-        BigDecimal monthlyPayment = new BigDecimal(amount * ratioAnnuity);
-        return monthlyPayment.setScale(2, BigDecimal.ROUND_HALF_UP);
+        BigDecimal monthlyPayment = BigDecimal.valueOf(amount * ratioAnnuity);
+        return monthlyPayment.setScale(2, ROUND_HALF_UP);
     }
-
 
     private List createListPaymentSchedule(double monthlyPayment, double amount, Integer term, double rate) {
         List<PaymentScheduleElementDTO> paymentSchedule = new ArrayList<>();
         LocalDate now = LocalDate.now();
-        LocalDate nextPaymentDay = LocalDate.of(now.getYear(), now.getMonthValue(), now.getDayOfMonth());
+        LocalDate paymentDay = LocalDate.of(now.getYear(), now.getMonthValue(), now.getDayOfMonth());
 
-        totalPayments = 0;
-        double bodyCredit, amountOfInterest, rateInDigital = rate / 100;
-        long yearDays, mounthDays;
+        double bodyCredit, percentageAmount, rateInDigital = rate / 100;
+        long yearDays, monthDays;
 
         for (int i = 1; i <= term; i++) {
 
-            mounthDays = ChronoUnit.DAYS.between(nextPaymentDay, nextPaymentDay.plusMonths(1));
-            nextPaymentDay = nextPaymentDay.plusMonths(1);
+            monthDays = ChronoUnit.DAYS.between(paymentDay, paymentDay.plusMonths(1));
+            paymentDay = paymentDay.plusMonths(1);
 
-            yearDays = nextPaymentDay.lengthOfYear();
-            amountOfInterest = amount * rateInDigital * mounthDays / yearDays;
-            if (i == term) monthlyPayment = amount + amountOfInterest;
+            yearDays = paymentDay.lengthOfYear();
+            percentageAmount = amount * rateInDigital * monthDays / yearDays;
+            if (i == term) monthlyPayment = amount + percentageAmount;
 
-
-            bodyCredit = monthlyPayment - amountOfInterest;
+            bodyCredit = monthlyPayment - percentageAmount;
             amount -= bodyCredit;
-            totalPayments += monthlyPayment;
 
             paymentSchedule.add(new PaymentScheduleElementDTO().builder()
-                    .number(new BigDecimal(i))
-                    .date(nextPaymentDay)
-                    .totalPayment(new BigDecimal(monthlyPayment).setScale(2, BigDecimal.ROUND_HALF_UP))
-                    .interestPayment(new BigDecimal(amountOfInterest).setScale(2, BigDecimal.ROUND_HALF_UP))
-                    .debtPayment(new BigDecimal(bodyCredit).setScale(2, BigDecimal.ROUND_HALF_UP))
-                    .remainingDebt(new BigDecimal(amount).setScale(2, BigDecimal.ROUND_HALF_UP))
+                    .number(BigDecimal.valueOf(i))
+                    .date(paymentDay)
+                    .totalPayment(BigDecimal.valueOf(monthlyPayment).setScale(2, ROUND_HALF_UP))
+                    .interestPayment(BigDecimal.valueOf(percentageAmount).setScale(2, ROUND_HALF_UP))
+                    .debtPayment(BigDecimal.valueOf(bodyCredit).setScale(2, ROUND_HALF_UP))
+                    .remainingDebt(BigDecimal.valueOf(amount).setScale(2, ROUND_HALF_UP))
                     .build());
         }
-
         return paymentSchedule;
     }
-
 }
