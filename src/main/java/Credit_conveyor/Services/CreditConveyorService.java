@@ -164,11 +164,6 @@ public class CreditConveyorService {
         return differenceDates.getYear();
     }
 
-    private long createPersonalAppId(double monthlyPayment, double personalRate, long appId) {
-        long personalId = appId + (long) (monthlyPayment * personalRate);
-        return personalId;
-    }
-
     private long createChiefAppId(LoanApplicationRequestDTO loanApplicationRequest) {
         String all_str_fields_request = loanApplicationRequest.getFirstName() + loanApplicationRequest.getMiddleName() + loanApplicationRequest.getLastName() + loanApplicationRequest.getEmail() + loanApplicationRequest.getPassportNumber() + loanApplicationRequest.getPassportSeries() + loanApplicationRequest.getBirthdate();
         long appId = (all_str_fields_request).chars().sum();
